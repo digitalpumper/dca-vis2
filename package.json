@@ -31,7 +31,6 @@
     ]
   },
   "browserslist": {
-    "react-dom": "./src/react-dom-shim.js",
     "production": [
       ">0.2%",
       "not dead",
