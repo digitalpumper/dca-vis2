@@ -1,26 +1,20 @@
+// App.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import * as d3 from 'd3';
-import InteractiveDCAChart from './InteractiveDCAChart';
+import InteractiveDCAChart, { detectDateColumn } from './InteractiveDCAChart';
 import Slider from 'rc-slider';
 import 'rc-slider/assets/index.css';
 
 export default function App() {
-  // 1) Data / CSV state
   const [dataString, setDataString] = useState('');
-  
-  // 2) Date filter states
   const [minDate, setMinDate] = useState(null);
   const [maxDate, setMaxDate] = useState(null);
   const [dateRange, setDateRange] = useState([0, 0]);
-
-  // 3) Overlays and toggles
   const [showDataInput, setShowDataInput] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
   const [show60DayAverages, setShow60DayAverages] = useState(false);
-
-  // 4) Sidebar controls
   const [colors, setColors] = useState({
     oil: "#008000",
     water: "#0000ff",
@@ -28,20 +22,13 @@ export default function App() {
     pressure: "#000000"
   });
   const [yScaleType, setYScaleType] = useState("linear");
-  
-  // 5) Let forecastDays be user-adjustable
   const [forecastDays, setForecastDays] = useState(90);
-
-  // 6) Chart reset key (for "Reset Autofit" logic)
   const [chartKey, setChartKey] = useState(0);
-  const resetAutoFit = () => setChartKey(prev => prev + 1);
-
-  // 7) Computed chart parameters & 60-day averages
   const [chartParams, setChartParams] = useState(null);
   const [sixtyDayAverages, setSixtyDayAverages] = useState(null);
   const [sixtyDayJSON, setSixtyDayJSON] = useState("");
 
-  // 8) Parse dataString to find min/max date
+  // Parse CSV to get date range (only when dataString changes)
   useEffect(() => {
     if (!dataString) return;
     try {
@@ -54,7 +41,7 @@ export default function App() {
           const maxD = new Date(Math.max(...dates));
           setMinDate(minD);
           setMaxDate(maxD);
-          const totalDays = Math.ceil((maxD - minD) / (1000 * 60 * 60 * 24));
+          const totalDays = Math.ceil((maxD - minD) / 86400000);
           setDateRange([0, totalDays]);
         }
       }
@@ -63,23 +50,8 @@ export default function App() {
     }
   }, [dataString]);
 
-  // Helper functions moved outside the component
-  function detectDateColumn(headers) {
-    const candidates = headers.filter(h => {
-      const lower = h.toLowerCase();
-      return (
-        (lower.includes("prod") && lower.includes("date")) ||
-        lower.includes("proddt") ||
-        lower.includes("proddttm") ||
-        lower === "date" ||
-        lower === "datetime"
-      );
-    });
-    return candidates.length > 0 ? candidates[0] : "Production_Date";
-  }
-
-  // 9) File upload handler
-  function handleFileUpload(e) {
+  // File upload handler
+  const handleFileUpload = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const fileName = file.name.toLowerCase();
@@ -100,47 +72,28 @@ export default function App() {
     } else {
       alert("Unsupported file format. Please upload CSV, TXT, XLS, or XLSX.");
     }
-  }
-
-  // 10) Filtered date range logic
-  const totalDays = useMemo(() => {
-    return (minDate && maxDate)
-      ? Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24))
-      : 0;
-  }, [minDate, maxDate]);
-  
-  const filteredStartDate = useMemo(() => {
-    return (minDate)
-      ? new Date(minDate.getTime() + dateRange[0] * 86400000)
-      : null;
-  }, [minDate, dateRange]);
-  
-  const filteredEndDate = useMemo(() => {
-    return (minDate)
-      ? new Date(minDate.getTime() + dateRange[1] * 86400000)
-      : null;
-  }, [minDate, dateRange]);
-
-  // 11) Receiving final chart parameters from InteractiveDCAChart
-  // Use useCallback to prevent handleParameters from being recreated on each render
-  const handleParameters = useCallback((params) => {
-    // Only update if values have actually changed to prevent infinite loop
-    setChartParams(prevParams => {
-      if (!prevParams || JSON.stringify(prevParams) !== JSON.stringify(params)) {
-        return params;
-      }
-      return prevParams;
-    });
   }, []);
 
-  // 12) If chartParams has forecastAverage, that is our 60-day data
-  const forecast60Avg = useMemo(() => {
-    return (chartParams && chartParams.forecastAverage) || {};
-  }, [chartParams]);
+  const totalDays = useMemo(() => (minDate && maxDate)
+    ? Math.ceil((maxDate - minDate) / 86400000) : 0, [minDate, maxDate]);
 
-  // Update sixtyDayJSON and sixtyDayAverages when forecast60Avg changes
+  const filteredStartDate = useMemo(() =>
+    minDate ? new Date(minDate.getTime() + dateRange[0] * 86400000) : null,
+    [minDate, dateRange]);
+
+  const filteredEndDate = useMemo(() =>
+    minDate ? new Date(minDate.getTime() + dateRange[1] * 86400000) : null,
+    [minDate, dateRange]);
+
+  const resetAutoFit = () => setChartKey(prev => prev + 1);
+
+  // Receive parameters from chart component
+  const handleParameters = useCallback((params) => {
+    setChartParams(prev => JSON.stringify(prev) !== JSON.stringify(params) ? params : prev);
+  }, []);
+
+  const forecast60Avg = useMemo(() => (chartParams && chartParams.forecastAverage) || {}, [chartParams]);
   useEffect(() => {
-    // Prevent unnecessary state updates
     const newJSON = JSON.stringify(forecast60Avg, null, 2);
     if (sixtyDayJSON !== newJSON) {
       setSixtyDayJSON(newJSON);
@@ -151,8 +104,6 @@ export default function App() {
   return (
     <div style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
       <h2>Custom DCA Application</h2>
-      
-      {/* Row with file upload and data text toggle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <label>
           Upload CSV/Excel:&nbsp;
@@ -162,20 +113,16 @@ export default function App() {
           {showDataInput ? "Hide CSV Data" : "Show CSV Data"}
         </button>
       </div>
-
       {showDataInput && (
         <div style={{ marginBottom: 10 }}>
           <textarea
             value={dataString}
             onChange={e => setDataString(e.target.value)}
             placeholder="Paste CSV data here..."
-            rows={6}
-            cols={80}
+            rows={6} cols={80}
           />
         </div>
       )}
-
-      {/* 60-Day Averages toggle */}
       <div style={{ marginBottom: 10 }}>
         <button onClick={() => setShow60DayAverages(prev => !prev)}>
           {show60DayAverages ? "Hide 60-Day Averages" : "Show 60-Day Averages"}
@@ -190,11 +137,8 @@ export default function App() {
           <pre style={{ margin: 0 }}>{sixtyDayJSON}</pre>
         </div>
       )}
-
-      {/* Layout: Chart + Sidebar */}
       <div style={{ display: 'flex', gap: 20 }}>
         <div style={{ flexGrow: 1, position: 'relative' }}>
-          {/* Overlays on top-left of chart */}
           <div style={{
             position: 'absolute', top: 10, left: 10,
             zIndex: 100, display: 'flex', gap: '10px'
@@ -218,8 +162,6 @@ export default function App() {
               {showParameters ? "Hide Parameters" : "Show Parameters"}
             </button>
           </div>
-
-          {/* Parameters Overlay */}
           {showParameters && chartParams && (
             <div style={{
               position: 'absolute', top: 50, right: 10,
@@ -262,23 +204,18 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
-              <button 
-                onClick={() => setShowParameters(false)} 
-                style={{ 
-                  marginTop: 15, 
-                  padding: '6px 12px', 
-                  background: '#f5f5f5', 
-                  border: '1px solid #ccc', 
-                  borderRadius: '4px',
-                  cursor: 'pointer'
+              <button
+                onClick={() => setShowParameters(false)}
+                style={{
+                  marginTop: 15, padding: '6px 12px',
+                  background: '#f5f5f5', border: '1px solid #ccc',
+                  borderRadius: '4px', cursor: 'pointer'
                 }}
               >
                 Close
               </button>
             </div>
           )}
-
-          {/* Instructions Overlay */}
           {showInstructions && (
             <div style={{
               position: 'absolute', top: 50, left: 10,
@@ -289,38 +226,33 @@ export default function App() {
               <h4 style={{ marginTop: 0, marginBottom: 10 }}>Interactive Controls</h4>
               <ul style={{ paddingLeft: 20, margin: '10px 0' }}>
                 <li style={{ marginBottom: 8 }}>
-                  Hold <strong>D</strong> key and drag a curve up/down to adjust decline rate (D)
+                  Hold <strong>D</strong> key and drag to adjust decline rate (D)
                 </li>
                 <li style={{ marginBottom: 8 }}>
-                  Hold <strong>Q</strong> key and drag a curve up/down to adjust initial rate (Qi)
+                  Hold <strong>Q</strong> key and drag to adjust initial rate (Qi)
                 </li>
                 <li style={{ marginBottom: 8 }}>
-                  Hold <strong>B</strong> key and drag a curve up/down to adjust decline exponent (b)
+                  Hold <strong>B</strong> key and drag to adjust decline exponent (b)
                 </li>
                 <li style={{ marginBottom: 8 }}>
-                  Mouse over the chart to see a tooltip with values
+                  Mouse over the chart to see tooltip values
                 </li>
                 <li style={{ marginBottom: 8 }}>
-                  Dragging a curve disables autofit until reset
+                  Dragging disables autofit until reset
                 </li>
               </ul>
-              <button 
-                onClick={() => setShowInstructions(false)} 
-                style={{ 
-                  marginTop: 5, 
-                  padding: '6px 12px', 
-                  background: '#f5f5f5', 
-                  border: '1px solid #ccc', 
-                  borderRadius: '4px',
-                  cursor: 'pointer'
+              <button
+                onClick={() => setShowInstructions(false)}
+                style={{
+                  marginTop: 5, padding: '6px 12px',
+                  background: '#f5f5f5', border: '1px solid #ccc',
+                  borderRadius: '4px', cursor: 'pointer'
                 }}
               >
                 Close
               </button>
             </div>
           )}
-
-          {/* The chart */}
           <div style={{ marginBottom: 50 }}>
             <InteractiveDCAChart
               key={chartKey}
@@ -329,13 +261,10 @@ export default function App() {
               endDate={filteredEndDate ? filteredEndDate.toISOString().slice(0,10) : ""}
               colors={colors}
               yScaleType={yScaleType}
-              yMultiplier={1}  // fixed multiplier
               forecastDays={forecastDays}
               onParametersCalculated={handleParameters}
             />
           </div>
-
-          {/* Production Date Range slider */}
           <div style={{ marginTop: 10 }}>
             <label>
               Production Date Range:
@@ -344,21 +273,14 @@ export default function App() {
                 max={totalDays}
                 value={dateRange}
                 onChange={nr => setDateRange(nr)}
-                tipFormatter={val => {
-                  if (!minDate) return '';
-                  return new Date(minDate.getTime() + val * 86400000).toDateString();
-                }}
+                tipFormatter={val => minDate ? new Date(minDate.getTime() + val * 86400000).toDateString() : ''}
               />
             </label>
             <div style={{ marginTop: 5 }}>
-              {filteredStartDate ? filteredStartDate.toDateString() : 'N/A'}
-              {" – "}
-              {filteredEndDate ? filteredEndDate.toDateString() : 'N/A'}
+              {filteredStartDate ? filteredStartDate.toDateString() : 'N/A'} – {filteredEndDate ? filteredEndDate.toDateString() : 'N/A'}
             </div>
           </div>
         </div>
-
-        {/* Sidebar with colors, axis controls, forecastDays slider, etc. */}
         <div style={{ width: 250 }}>
           <div style={{ marginBottom: 20 }}>
             <h4>Phase Colors</h4>
@@ -376,7 +298,6 @@ export default function App() {
               </div>
             ))}
           </div>
-
           <div style={{ marginBottom: 20 }}>
             <h4>Axis & Forecast</h4>
             <div style={{ marginBottom: 10 }}>
@@ -414,7 +335,6 @@ export default function App() {
               </label>
             </div>
           </div>
-
           <div>
             <button
               onClick={resetAutoFit}
