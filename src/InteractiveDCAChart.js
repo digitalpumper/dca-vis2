@@ -1,52 +1,12 @@
-// InteractiveDCAChart.jsx
+// src/InteractiveDCAChart.js
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
+import { calculateRate, detectDateColumn, detectColumns } from './dca';
 
-// --- Utility Functions ---
-export const calculateRate = (Qi, b, D, t) => {
-  if (b === 0) return Qi * Math.exp(-D * t);
-  return Qi / Math.pow(1 + b * D * t, 1 / b);
-};
-
-export const detectDateColumn = (columns) => {
-  const candidates = columns.filter(h => {
-    const lower = h.toLowerCase();
-    return (
-      (lower.includes("prod") && lower.includes("date")) ||
-      lower.includes("proddt") ||
-      lower.includes("proddttm") ||
-      lower === "date" ||
-      lower === "datetime"
-    );
-  });
-  return candidates.length > 0 ? candidates[0] : "Production_Date";
-};
-
-export const detectColumns = (columns) => {
-  let phases = {};
-  columns.forEach(header => {
-    const lower = header.toLowerCase();
-    if (lower.includes("bopd") || (lower.includes("oil") && !phases.oil)) {
-      phases.oil = header;
-    }
-    if (lower.includes("bwpd") || (lower.includes("water") && !phases.water)) {
-      phases.water = header;
-    }
-    if (lower.includes("mcfd") || (lower.includes("gas") && !phases.gas)) {
-      phases.gas = header;
-    }
-    if ((lower.includes("pip") || lower.includes("pressure") || lower.includes("psi")) && !phases.pressure) {
-      phases.pressure = header;
-    }
-  });
-  return phases;
-};
-
-// --- Throttle Helper ---
+// Throttled mouse event hook
 const useThrottledMouse = (callback, delay = 50) => {
   const frame = useRef(null);
   const lastArgs = useRef(null);
-  
   const throttledCallback = useCallback((...args) => {
     lastArgs.current = args;
     if (frame.current) return;
@@ -55,11 +15,9 @@ const useThrottledMouse = (callback, delay = 50) => {
       frame.current = null;
     });
   }, [callback]);
-  
   return throttledCallback;
 };
 
-// --- InteractiveDCAChart Component ---
 const InteractiveDCAChart = React.memo(({
   dataString,
   startDate,
@@ -67,7 +25,6 @@ const InteractiveDCAChart = React.memo(({
   colors,
   yScaleType,
   forecastDays,
-  autoForecast = true,
   onParametersCalculated
 }) => {
   const svgRef = useRef(null);
@@ -82,7 +39,7 @@ const InteractiveDCAChart = React.memo(({
   const prevParamsRef = useRef({});
   const lastOnParamsCallRef = useRef(null);
 
-  // Parse CSV data (only when dataString changes)
+  // Parse CSV data
   const parsedData = useMemo(() => {
     try {
       return d3.csvParse(dataString);
@@ -97,13 +54,12 @@ const InteractiveDCAChart = React.memo(({
     hasData ? detectDateColumn(parsedData.columns) : "Production_Date",
     [hasData, parsedData]
   );
-
   const phasesDetected = useMemo(() =>
     hasData ? detectColumns(parsedData.columns) : {},
     [hasData, parsedData]
   );
 
-  // Filter and sort data based on date range
+  // Filter and sort data by date
   const filteredData = useMemo(() => {
     if (!hasData) return [];
     let arr = parsedData.map(row => ({
@@ -127,15 +83,15 @@ const InteractiveDCAChart = React.memo(({
     localHasData ? filteredData[0][prodDateCol] : new Date(),
     [localHasData, filteredData, prodDateCol]
   );
-
   const data = useMemo(() => {
     if (!localHasData) return [];
     return filteredData.map(row => ({
       ...row,
-      t: (row[prodDateCol] - firstDate) / 86400000
+      t: (row[prodDateCol] - firstDate) / (1000 * 60 * 60 * 24)
     }));
   }, [filteredData, localHasData, firstDate, prodDateCol]);
 
+  // Build phase-specific time series
   const phaseData = useMemo(() => {
     let result = {};
     Object.keys(phasesDetected).forEach(phase => {
@@ -153,7 +109,7 @@ const InteractiveDCAChart = React.memo(({
     [data, localHasData, prodDateCol]
   );
 
-  // Auto-fit parameters (only runs when phaseData changes)
+  // Auto-fit decline parameters
   useEffect(() => {
     if (!localHasData) return;
     let newParams = {};
@@ -168,7 +124,7 @@ const InteractiveDCAChart = React.memo(({
         const b = 0.5;
         const ratio = last.value / first.value;
         const t = last.t - first.t;
-        let D = b === 0 ? -Math.log(ratio) / t : ((1 / ratio) ** b - 1) / (b * t);
+        let D = (b === 0) ? -Math.log(ratio) / t : (Math.pow(1 / ratio, b) - 1) / (b * t);
         D = Math.max(0.001, Math.min(0.5, D));
         newParams[phase] = { Qi, b, D };
       }
@@ -179,7 +135,7 @@ const InteractiveDCAChart = React.memo(({
     }
   }, [phaseData, localHasData]);
 
-  // Prepare points for plotting (historical and forecast)
+  // Historical plot points
   const allHistoricalPoints = useMemo(() => {
     let out = [];
     Object.keys(phaseData).forEach(phase => {
@@ -194,6 +150,7 @@ const InteractiveDCAChart = React.memo(({
     return out;
   }, [phaseData, firstDate]);
 
+  // Forecast points
   const allForecastPoints = useMemo(() => {
     if (!localHasData) return {};
     let out = {};
@@ -204,7 +161,7 @@ const InteractiveDCAChart = React.memo(({
         return;
       }
       const lastRate = calculateRate(Qi, b, D, tMax);
-      const points = [{
+      let points = [{
         date: lastProdDate,
         Q: lastRate,
         phase
@@ -225,7 +182,7 @@ const InteractiveDCAChart = React.memo(({
     return out;
   }, [phaseParams, tMax, lastProdDate, forecastDays, localHasData]);
 
-  // Calculate EUR and forecast average
+  // Calculate EUR and forecast averages
   const calculatedEUR = useMemo(() => {
     let results = {};
     Object.keys(phaseParams).forEach(phase => {
@@ -261,7 +218,7 @@ const InteractiveDCAChart = React.memo(({
     return fa;
   }, [phaseParams, tMax]);
 
-  // Inform parent of parameter changes
+  // Inform parent if parameters change
   useEffect(() => {
     if (!onParametersCalculated) return;
     const newParams = { phaseParams, calculatedEUR, forecastAverage };
@@ -271,7 +228,7 @@ const InteractiveDCAChart = React.memo(({
     }
   }, [phaseParams, calculatedEUR, forecastAverage, onParametersCalculated]);
 
-  // Key event handling
+  // Key listeners for drag adjustments
   useEffect(() => {
     const handleKeyDown = (e) => {
       const key = e.key.toLowerCase();
@@ -289,33 +246,33 @@ const InteractiveDCAChart = React.memo(({
     };
   }, []);
 
-  // Drag adjustment helper
   const getAdjustmentForDrag = useCallback((key, dy, originalValue) => {
     switch (key) {
-      case "d": return Math.max(0.0001, originalValue * (1 - dy * 0.0005));
-      case "q": return Math.max(1, originalValue - dy * 0.5);
-      case "b": return Math.max(0, Math.min(1, originalValue + dy * 0.002));
-      default: return originalValue;
+      case "d":
+        return Math.max(0.0001, originalValue * (1 - dy * 0.0005));
+      case "q":
+        return Math.max(1, originalValue - dy * 0.5);
+      case "b":
+        return Math.max(0, Math.min(1, originalValue + dy * 0.002));
+      default:
+        return originalValue;
     }
   }, []);
 
-  // --- D3 Rendering Effect ---
+  // D3 Rendering
   useEffect(() => {
     if (!localHasData || !svgRef.current) return;
-
     const margin = { top: 20, right: 30, bottom: 40, left: 60 };
     const width = 800, height = 400;
     const svg = d3.select(svgRef.current);
     svg.selectAll("*").remove();
 
-    // Layers for rendering
     const baseLayer = svg.append("g").attr("class", "base-layer");
     const dataLayer = svg.append("g").attr("class", "data-layer");
     const forecastLayer = svg.append("g").attr("class", "forecast-layer");
     const axisLayer = svg.append("g").attr("class", "axis-layer");
     const overlayLayer = svg.append("g").attr("class", "overlay-layer");
 
-    // Background
     baseLayer.append("rect")
       .attr("x", margin.left)
       .attr("y", margin.top)
@@ -324,7 +281,6 @@ const InteractiveDCAChart = React.memo(({
       .attr("fill", "#f8f8f8")
       .attr("stroke", "#ccc");
 
-    // Scales (computed once per render)
     const allDates = [
       ...allHistoricalPoints.map(d => d.date),
       ...Object.values(allForecastPoints).flat().map(d => d.date)
@@ -352,23 +308,17 @@ const InteractiveDCAChart = React.memo(({
       : d3.scaleLinear().domain([minQ, maxQ]).range([height - margin.bottom, margin.top]);
     yScaleRef.current = yScale;
 
-    // Grid lines
     baseLayer.append("g")
       .attr("class", "grid y-grid")
       .attr("opacity", 0.3)
       .attr("transform", `translate(${margin.left},0)`)
-      .call(d3.axisLeft(yScale)
-        .tickSize(-(width - margin.left - margin.right))
-        .tickFormat(""));
+      .call(d3.axisLeft(yScale).tickSize(-(width - margin.left - margin.right)).tickFormat(""));
     baseLayer.append("g")
       .attr("class", "grid x-grid")
       .attr("opacity", 0.3)
       .attr("transform", `translate(0,${height - margin.bottom})`)
-      .call(d3.axisBottom(xScale)
-        .tickSize(-(height - margin.top - margin.bottom))
-        .tickFormat(""));
+      .call(d3.axisBottom(xScale).tickSize(-(height - margin.top - margin.bottom)).tickFormat(""));
 
-    // Plot historical points
     Object.keys(phasesDetected).forEach(phase => {
       const pts = allHistoricalPoints.filter(p => p.phase === phase);
       dataLayer.selectAll(`circle.${phase}`)
@@ -381,7 +331,6 @@ const InteractiveDCAChart = React.memo(({
         .attr("fill", colors[phase] || "#888");
     });
 
-    // Draw trend lines
     Object.keys(phaseParams).forEach(phase => {
       if (!phaseParams[phase] || !phaseData[phase]?.length) return;
       const { Qi, b, D } = phaseParams[phase];
@@ -397,7 +346,7 @@ const InteractiveDCAChart = React.memo(({
         .x(d => xScale(d.date))
         .y(d => yScale(d.Q))
         .curve(d3.curveMonotoneX);
-      dataLayer.append("path")
+      const declineLine = dataLayer.append("path")
         .datum(lineData)
         .attr("class", `decline-line-${phase}`)
         .attr("fill", "none")
@@ -405,41 +354,43 @@ const InteractiveDCAChart = React.memo(({
         .attr("stroke-width", 2)
         .attr("d", lineGen)
         .style("cursor", "pointer")
-        .on("mouseover", function() { d3.select(this).attr("stroke-width", 4); })
+        .on("mouseover", function() {
+          d3.select(this).attr("stroke-width", 4);
+        })
         .on("mouseout", function() {
           if (phase !== activePhase) d3.select(this).attr("stroke-width", 2);
-        })
-        .on("mousedown", function(event) {
-          setActivePhase(phase);
-          d3.select(this).attr("stroke-width", 4);
-          if (activeKey) {
-            dragStartRef.current = { y: event.y, params: { ...phaseParams[phase] } };
-          }
         });
+      
+      declineLine.call(d3.drag()
+        .on("start", function(event) {
+          if (!activeKey) return;
+          setActivePhase(phase);
+          dragStartRef.current = { y: event.y, params: { ...phaseParams[phase] } };
+          event.sourceEvent.stopPropagation();
+        })
+        .on("drag", function(event) {
+          if (!activeKey || !activePhase || !dragStartRef.current) return;
+          const { y, params } = dragStartRef.current;
+          const dy = event.y - y;
+          setPhaseParams(prev => {
+            const copy = { ...prev };
+            if (!copy[activePhase]) return prev;
+            const curr = { ...copy[activePhase] };
+            if (activeKey === "d") curr.D = getAdjustmentForDrag("d", dy, params.D);
+            else if (activeKey === "q") curr.Qi = getAdjustmentForDrag("q", dy, params.Qi);
+            else if (activeKey === "b") curr.b = getAdjustmentForDrag("b", dy, params.b);
+            copy[activePhase] = curr;
+            return copy;
+          });
+          event.sourceEvent.stopPropagation();
+        })
+        .on("end", function(event) {
+          dragStartRef.current = null;
+          event.sourceEvent.stopPropagation();
+        })
+      );
     });
 
-    // D3 drag behavior – note that state is updated less frequently
-    svg.call(d3.drag()
-      .filter(() => activeKey && activePhase)
-      .on("drag", function(event) {
-        if (!activeKey || !activePhase || !dragStartRef.current) return;
-        const { y, params } = dragStartRef.current;
-        const dy = event.y - y;
-        setPhaseParams(prev => {
-          const copy = { ...prev };
-          if (!copy[activePhase]) return prev;
-          const curr = { ...copy[activePhase] };
-          if (activeKey === "d") curr.D = getAdjustmentForDrag("d", dy, params.D);
-          else if (activeKey === "q") curr.Qi = getAdjustmentForDrag("q", dy, params.Qi);
-          else if (activeKey === "b") curr.b = getAdjustmentForDrag("b", dy, params.b);
-          copy[activePhase] = curr;
-          return copy;
-        });
-      })
-      .on("end", () => { dragStartRef.current = null; })
-    );
-
-    // Draw forecast lines
     Object.keys(allForecastPoints).forEach(phase => {
       const forecastPts = allForecastPoints[phase];
       if (forecastPts.length > 1) {
@@ -460,7 +411,6 @@ const InteractiveDCAChart = React.memo(({
       }
     });
 
-    // Vertical line & forecast label at last production date
     overlayLayer.append("line")
       .attr("x1", xScale(lastProdDate))
       .attr("y1", margin.top)
@@ -475,7 +425,6 @@ const InteractiveDCAChart = React.memo(({
       .attr("fill", "#666")
       .text("Forecast →");
 
-    // Axes
     const xAxis = d3.axisBottom(xScale).tickFormat(d3.timeFormat("%Y-%m-%d"));
     axisLayer.append("g")
       .attr("transform", `translate(0,${height - margin.bottom})`)
@@ -501,28 +450,27 @@ const InteractiveDCAChart = React.memo(({
       .style("text-anchor", "middle")
       .text("Production Rate");
 
-    // Zoom behavior: only update Y scale (and axis) for smoother interaction
     const zoom = d3.zoom()
       .scaleExtent([0.5, 10])
       .on("zoom", event => {
-        const newY = event.transform.rescaleY(yScale);
-        yScaleRef.current = newY;
-        dataLayer.selectAll("circle").attr("cy", d => newY(d.Q));
-        dataLayer.selectAll("path").attr("d", d => {
+        const newYScale = event.transform.rescaleY(yScale);
+        yScaleRef.current = newYScale;
+        dataLayer.selectAll("circle").attr("cy", d => newYScale(d.Q));
+        dataLayer.selectAll("path").attr("d", function(d) {
           if (!Array.isArray(d)) return;
           return d3.line()
             .x(d => xScale(d.date))
-            .y(d => newY(d.Q))
+            .y(d => newYScale(d.Q))
             .curve(d3.curveMonotoneX)(d);
         });
-        forecastLayer.selectAll("path").attr("d", d => {
+        forecastLayer.selectAll("path").attr("d", function(d) {
           if (!Array.isArray(d)) return;
           return d3.line()
             .x(d => xScale(d.date))
-            .y(d => newY(d.Q))
+            .y(d => newYScale(d.Q))
             .curve(d3.curveMonotoneX)(d);
         });
-        axisLayer.select("g").call(yAxis.scale(newY));
+        axisLayer.select("g").call(yAxis.scale(newYScale));
       });
     svg.call(zoom);
   }, [
@@ -532,7 +480,6 @@ const InteractiveDCAChart = React.memo(({
     getAdjustmentForDrag
   ]);
 
-  // Throttled mouse move for tooltip updates
   const throttledMouseMove = useThrottledMouse((event) => {
     if (!localHasData || !xScaleRef.current) return;
     const [mouseX] = d3.pointer(event, svgRef.current);
@@ -575,9 +522,7 @@ const InteractiveDCAChart = React.memo(({
         }}>
           <div>{hoverInfo.date.toDateString()}</div>
           {Object.keys(hoverInfo.values).map(ph => (
-            <div key={ph}>
-              {ph.toUpperCase()}: {hoverInfo.values[ph].toFixed(2)}
-            </div>
+            <div key={ph}>{ph.toUpperCase()}: {hoverInfo.values[ph].toFixed(2)}</div>
           ))}
         </div>
       )}

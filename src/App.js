@@ -1,20 +1,23 @@
-// App.jsx
+// src/App.js
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import * as XLSX from 'xlsx';
 import * as d3 from 'd3';
-import InteractiveDCAChart, { detectDateColumn } from './InteractiveDCAChart';
-import Slider from 'rc-slider';
-import 'rc-slider/assets/index.css';
+import * as XLSX from 'xlsx';
+import InteractiveDCAChart from './InteractiveDCAChart';
+import DualRangeSlider from './DualRangeSlider';
+import { detectDateColumn } from './dca';
 
-export default function App() {
+function App() {
   const [dataString, setDataString] = useState('');
   const [minDate, setMinDate] = useState(null);
   const [maxDate, setMaxDate] = useState(null);
-  const [dateRange, setDateRange] = useState([0, 0]);
+  // Initialize dateRange with a fallback range [0,1]
+  const [dateRange, setDateRange] = useState([0, 1]);
+
   const [showDataInput, setShowDataInput] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
   const [show60DayAverages, setShow60DayAverages] = useState(false);
+
   const [colors, setColors] = useState({
     oil: "#008000",
     water: "#0000ff",
@@ -24,33 +27,12 @@ export default function App() {
   const [yScaleType, setYScaleType] = useState("linear");
   const [forecastDays, setForecastDays] = useState(90);
   const [chartKey, setChartKey] = useState(0);
+
   const [chartParams, setChartParams] = useState(null);
   const [sixtyDayAverages, setSixtyDayAverages] = useState(null);
   const [sixtyDayJSON, setSixtyDayJSON] = useState("");
 
-  // Parse CSV to get date range (only when dataString changes)
-  useEffect(() => {
-    if (!dataString) return;
-    try {
-      const parsed = d3.csvParse(dataString);
-      if (parsed && parsed.length > 0 && parsed.columns) {
-        const dateCol = detectDateColumn(parsed.columns);
-        const dates = parsed.map(row => new Date(row[dateCol])).filter(d => !isNaN(d));
-        if (dates.length) {
-          const minD = new Date(Math.min(...dates));
-          const maxD = new Date(Math.max(...dates));
-          setMinDate(minD);
-          setMaxDate(maxD);
-          const totalDays = Math.ceil((maxD - minD) / 86400000);
-          setDateRange([0, totalDays]);
-        }
-      }
-    } catch (err) {
-      console.error("Error parsing CSV:", err);
-    }
-  }, [dataString]);
-
-  // File upload handler
+  // Handle file upload (CSV, TXT, XLS, XLSX)
   const handleFileUpload = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -74,22 +56,55 @@ export default function App() {
     }
   }, []);
 
-  const totalDays = useMemo(() => (minDate && maxDate)
-    ? Math.ceil((maxDate - minDate) / 86400000) : 0, [minDate, maxDate]);
+  // When dataString changes, update minDate and maxDate from the CSV
+  useEffect(() => {
+    if (!dataString) return;
+    try {
+      const parsed = d3.csvParse(dataString);
+      if (parsed && parsed.length > 0 && parsed.columns) {
+        const dateCol = detectDateColumn(parsed.columns);
+        const dates = parsed.map(row => new Date(row[dateCol])).filter(d => !isNaN(d));
+        if (dates.length) {
+          const minD = new Date(Math.min(...dates));
+          const maxD = new Date(Math.max(...dates));
+          setMinDate(minD);
+          setMaxDate(maxD);
+          // Use a fallback: if computed totalDays is 0, use 1.
+          const computedDays = Math.ceil((maxD - minD) / (1000 * 60 * 60 * 24));
+          setDateRange([0, computedDays > 0 ? computedDays : 1]);
+        }
+      }
+    } catch (err) {
+      console.error("Error parsing CSV:", err);
+    }
+  }, [dataString]);
 
-  const filteredStartDate = useMemo(() =>
-    minDate ? new Date(minDate.getTime() + dateRange[0] * 86400000) : null,
-    [minDate, dateRange]);
+  // totalDays uses fallback of 1 when no data is loaded.
+  const totalDays = useMemo(() => {
+    if (minDate && maxDate) {
+      const diff = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
+      return diff > 0 ? diff : 1;
+    }
+    return 1;
+  }, [minDate, maxDate]);
 
-  const filteredEndDate = useMemo(() =>
-    minDate ? new Date(minDate.getTime() + dateRange[1] * 86400000) : null,
-    [minDate, dateRange]);
+  const filteredStartDate = useMemo(() => {
+    return minDate ? new Date(minDate.getTime() + dateRange[0] * 86400000) : null;
+  }, [minDate, dateRange]);
+
+  const filteredEndDate = useMemo(() => {
+    return minDate ? new Date(minDate.getTime() + dateRange[1] * 86400000) : null;
+  }, [minDate, dateRange]);
 
   const resetAutoFit = () => setChartKey(prev => prev + 1);
 
-  // Receive parameters from chart component
   const handleParameters = useCallback((params) => {
-    setChartParams(prev => JSON.stringify(prev) !== JSON.stringify(params) ? params : prev);
+    setChartParams(prev => {
+      if (JSON.stringify(prev) !== JSON.stringify(params)) {
+        return params;
+      }
+      return prev;
+    });
   }, []);
 
   const forecast60Avg = useMemo(() => (chartParams && chartParams.forecastAverage) || {}, [chartParams]);
@@ -100,6 +115,10 @@ export default function App() {
       setSixtyDayAverages(forecast60Avg);
     }
   }, [forecast60Avg, sixtyDayJSON]);
+
+  const tipFormatter = (val) => {
+    return minDate ? new Date(minDate.getTime() + val * 86400000).toDateString() : val;
+  };
 
   return (
     <div style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
@@ -119,7 +138,8 @@ export default function App() {
             value={dataString}
             onChange={e => setDataString(e.target.value)}
             placeholder="Paste CSV data here..."
-            rows={6} cols={80}
+            rows={6}
+            cols={80}
           />
         </div>
       )}
@@ -143,116 +163,21 @@ export default function App() {
             position: 'absolute', top: 10, left: 10,
             zIndex: 100, display: 'flex', gap: '10px'
           }}>
-            <button
-              onClick={() => setShowInstructions(p => !p)}
+            <button onClick={() => setShowInstructions(p => !p)}
               style={{
                 padding: '6px 12px', border: 'none', background: '#666',
                 color: '#fff', borderRadius: '4px', cursor: 'pointer'
-              }}
-            >
+              }}>
               {showInstructions ? "Hide Instructions" : "Show Instructions"}
             </button>
-            <button
-              onClick={() => setShowParameters(p => !p)}
+            <button onClick={() => setShowParameters(p => !p)}
               style={{
                 padding: '6px 12px', border: 'none', background: '#1890ff',
                 color: '#fff', borderRadius: '4px', cursor: 'pointer'
-              }}
-            >
+              }}>
               {showParameters ? "Hide Parameters" : "Show Parameters"}
             </button>
           </div>
-          {showParameters && chartParams && (
-            <div style={{
-              position: 'absolute', top: 50, right: 10,
-              background: 'rgba(255,255,255,0.98)', border: '1px solid #ccc',
-              padding: 15, zIndex: 1000, maxWidth: 300, borderRadius: 4,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-            }}>
-              <h4 style={{ marginTop: 0, marginBottom: 10 }}>Decline Parameters</h4>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr>
-                    <th style={{ border: '1px solid #ddd', padding: '8px', background: '#f5f5f5' }}>Phase</th>
-                    <th style={{ border: '1px solid #ddd', padding: '8px', background: '#f5f5f5' }}>Qi</th>
-                    <th style={{ border: '1px solid #ddd', padding: '8px', background: '#f5f5f5' }}>b</th>
-                    <th style={{ border: '1px solid #ddd', padding: '8px', background: '#f5f5f5' }}>D</th>
-                    <th style={{ border: '1px solid #ddd', padding: '8px', background: '#f5f5f5' }}>EUR</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chartParams.phaseParams && Object.keys(chartParams.phaseParams).map(phase => (
-                    <tr key={phase}>
-                      <td style={{ border: '1px solid #ddd', padding: '8px', fontWeight: 'bold' }}>
-                        {phase.toUpperCase()}
-                      </td>
-                      <td style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'right' }}>
-                        {chartParams.phaseParams[phase].Qi.toFixed(2)}
-                      </td>
-                      <td style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'right' }}>
-                        {chartParams.phaseParams[phase].b.toFixed(3)}
-                      </td>
-                      <td style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'right' }}>
-                        {chartParams.phaseParams[phase].D.toFixed(4)}
-                      </td>
-                      <td style={{ border: '1px solid #ddd', padding: '8px', textAlign: 'right' }}>
-                        {typeof chartParams.calculatedEUR[phase] === 'number'
-                          ? Math.round(chartParams.calculatedEUR[phase]).toLocaleString()
-                          : chartParams.calculatedEUR[phase]}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <button
-                onClick={() => setShowParameters(false)}
-                style={{
-                  marginTop: 15, padding: '6px 12px',
-                  background: '#f5f5f5', border: '1px solid #ccc',
-                  borderRadius: '4px', cursor: 'pointer'
-                }}
-              >
-                Close
-              </button>
-            </div>
-          )}
-          {showInstructions && (
-            <div style={{
-              position: 'absolute', top: 50, left: 10,
-              background: 'rgba(255,255,255,0.98)', border: '1px solid #ccc',
-              padding: 15, zIndex: 1000, maxWidth: 300, borderRadius: 4,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
-            }}>
-              <h4 style={{ marginTop: 0, marginBottom: 10 }}>Interactive Controls</h4>
-              <ul style={{ paddingLeft: 20, margin: '10px 0' }}>
-                <li style={{ marginBottom: 8 }}>
-                  Hold <strong>D</strong> key and drag to adjust decline rate (D)
-                </li>
-                <li style={{ marginBottom: 8 }}>
-                  Hold <strong>Q</strong> key and drag to adjust initial rate (Qi)
-                </li>
-                <li style={{ marginBottom: 8 }}>
-                  Hold <strong>B</strong> key and drag to adjust decline exponent (b)
-                </li>
-                <li style={{ marginBottom: 8 }}>
-                  Mouse over the chart to see tooltip values
-                </li>
-                <li style={{ marginBottom: 8 }}>
-                  Dragging disables autofit until reset
-                </li>
-              </ul>
-              <button
-                onClick={() => setShowInstructions(false)}
-                style={{
-                  marginTop: 5, padding: '6px 12px',
-                  background: '#f5f5f5', border: '1px solid #ccc',
-                  borderRadius: '4px', cursor: 'pointer'
-                }}
-              >
-                Close
-              </button>
-            </div>
-          )}
           <div style={{ marginBottom: 50 }}>
             <InteractiveDCAChart
               key={chartKey}
@@ -268,16 +193,18 @@ export default function App() {
           <div style={{ marginTop: 10 }}>
             <label>
               Production Date Range:
-              <Slider.Range
+              <DualRangeSlider
                 min={0}
                 max={totalDays}
-                value={dateRange}
-                onChange={nr => setDateRange(nr)}
-                tipFormatter={val => minDate ? new Date(minDate.getTime() + val * 86400000).toDateString() : ''}
+                values={dateRange}
+                onChange={setDateRange}
+                tipFormatter={tipFormatter}
               />
             </label>
             <div style={{ marginTop: 5 }}>
-              {filteredStartDate ? filteredStartDate.toDateString() : 'N/A'} – {filteredEndDate ? filteredEndDate.toDateString() : 'N/A'}
+              {minDate
+                ? `${new Date(minDate.getTime() + dateRange[0] * 86400000).toDateString()} – ${new Date(minDate.getTime() + dateRange[1] * 86400000).toDateString()}`
+                : 'N/A'}
             </div>
           </div>
         </div>
@@ -351,3 +278,5 @@ export default function App() {
     </div>
   );
 }
+
+export default App;
