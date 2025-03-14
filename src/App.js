@@ -19,6 +19,9 @@ function App() {
   const [showInstructions, setShowInstructions] = useState(false);
   const [show60DayAverages, setShow60DayAverages] = useState(false);
 
+  const [isEmbedded, setIsEmbedded] = useState(false);
+  const [isLoadingFromSpotfire, setIsLoadingFromSpotfire] = useState(false);
+
   const [colors, setColors] = useState({
     oil: "#008000",
     water: "#0000ff",
@@ -32,6 +35,85 @@ function App() {
   const [chartParams, setChartParams] = useState(null);
   const [sixtyDayAverages, setSixtyDayAverages] = useState(null);
   const [sixtyDayJSON, setSixtyDayJSON] = useState("");
+
+  // Check if running inside iframe (Spotfire)
+  useEffect(() => {
+    try {
+      setIsEmbedded(window.self !== window.top);
+      
+      // Notify parent window that we're ready to receive data
+      if (window.self !== window.top) {
+        window.parent.postMessage({
+          type: 'ready',
+          status: 'initialized'
+        }, '*');
+      }
+    } catch (e) {
+      // If we can't access window.top due to security restrictions,
+      // we're likely in an iframe with different origin
+      setIsEmbedded(true);
+    }
+  }, []);
+
+  // Listen for messages from Spotfire
+  useEffect(() => {
+    function handleMessage(event) {
+      // Basic security check
+      if (event.origin !== window.location.origin && 
+          !event.origin.includes('spotfire.com') && 
+          !event.origin.includes('tibco.com')) {
+        console.log('Message from untrusted origin:', event.origin);
+        return;
+      }
+      
+      if (event.data && event.data.type === 'spotfireData') {
+        console.log('Received data from Spotfire');
+        setIsLoadingFromSpotfire(true);
+        
+        try {
+          // Use the raw CSV directly if provided
+          if (event.data.rawCSV) {
+            setDataString(event.data.rawCSV);
+          } else if (event.data.data && event.data.headers) {
+            // Otherwise convert JSON back to CSV
+            const csvRows = [event.data.headers.join(',')];
+            
+            event.data.data.forEach(row => {
+              const values = event.data.headers.map(header => {
+                const val = row[header];
+                return typeof val === 'string' && val.includes(',') ? `"${val}"` : val;
+              });
+              csvRows.push(values.join(','));
+            });
+            
+            setDataString(csvRows.join('\n'));
+          }
+          
+          // Confirm receipt to parent
+          if (window.parent) {
+            window.parent.postMessage({
+              type: 'dataReceived',
+              status: 'success'
+            }, '*');
+          }
+          
+          setIsLoadingFromSpotfire(false);
+        } catch (error) {
+          console.error('Error processing Spotfire data:', error);
+          if (window.parent) {
+            window.parent.postMessage({
+              type: 'error',
+              message: error.message
+            }, '*');
+          }
+          setIsLoadingFromSpotfire(false);
+        }
+      }
+    }
+    
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
   // Handle file upload for CSV, TXT, XLS, XLSX
   const handleFileUpload = useCallback((e) => {
@@ -56,6 +138,20 @@ function App() {
       alert("Unsupported file format. Please upload CSV, TXT, XLS, or XLSX.");
     }
   }, []);
+
+  // Load sample data if not embedded and no data provided
+  useEffect(() => {
+    if (!isEmbedded && !dataString) {
+      // Only load sample data when running standalone
+      fetch('/sample-data.csv')
+        .then(response => {
+          if (!response.ok) throw new Error('Sample data not found');
+          return response.text();
+        })
+        .then(text => setDataString(text))
+        .catch(err => console.warn('Could not load sample data:', err));
+    }
+  }, [isEmbedded, dataString]);
 
   // Update date range from CSV data
   useEffect(() => {
@@ -130,17 +226,22 @@ function App() {
 
   return (
     <div style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
-      <h2>Custom DCA Application</h2>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-        <label>
-          Upload CSV/Excel:&nbsp;
-          <input type="file" onChange={handleFileUpload} />
-        </label>
-        <button onClick={() => setShowDataInput(prev => !prev)}>
-          {showDataInput ? "Hide CSV Data" : "Show CSV Data"}
-        </button>
-      </div>
-      {showDataInput && (
+      <h2>{isEmbedded ? 'Spotfire DCA Visualization' : 'Custom DCA Application'}</h2>
+      
+      {/* Hide upload controls when embedded in Spotfire */}
+      {!isEmbedded && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <label>
+            Upload CSV/Excel:&nbsp;
+            <input type="file" onChange={handleFileUpload} />
+          </label>
+          <button onClick={() => setShowDataInput(prev => !prev)}>
+            {showDataInput ? "Hide CSV Data" : "Show CSV Data"}
+          </button>
+        </div>
+      )}
+      
+      {showDataInput && !isEmbedded && (
         <div style={{ marginBottom: 10 }}>
           <textarea
             value={dataString}
@@ -151,11 +252,13 @@ function App() {
           />
         </div>
       )}
+      
       <div style={{ marginBottom: 10 }}>
         <button onClick={() => setShow60DayAverages(prev => !prev)}>
           {show60DayAverages ? "Hide 60-Day Averages" : "Show 60-Day Averages"}
         </button>
       </div>
+      
       {show60DayAverages && sixtyDayAverages && (
         <div style={{
           background: '#f9f9f9', border: '1px solid #ccc', padding: 10,
@@ -165,6 +268,19 @@ function App() {
           <pre style={{ margin: 0 }}>{sixtyDayJSON}</pre>
         </div>
       )}
+      
+      {isLoadingFromSpotfire && (
+        <div style={{ 
+          padding: '10px', 
+          backgroundColor: '#e6f7ff', 
+          border: '1px solid #91d5ff',
+          borderRadius: '4px',
+          marginBottom: '10px'
+        }}>
+          Loading data from Spotfire...
+        </div>
+      )}
+      
       <div style={{ display: 'flex', gap: 20 }}>
         <div style={{ flexGrow: 1, position: 'relative' }}>
           <div style={{
@@ -186,6 +302,50 @@ function App() {
               {showParameters ? "Hide Parameters" : "Show Parameters"}
             </button>
           </div>
+          
+          {showInstructions && (
+            <div style={{
+              position: 'absolute',
+              top: '50px',
+              left: '10px',
+              zIndex: '90',
+              backgroundColor: 'rgba(255, 255, 255, 0.95)',
+              padding: '15px',
+              borderRadius: '5px',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+              maxWidth: '300px'
+            }}>
+              <h4 style={{ marginTop: 0 }}>Instructions</h4>
+              <ul style={{ paddingLeft: '20px', margin: '0' }}>
+                <li>Drag curves vertically to adjust parameters</li>
+                <li>By default, adjust Q proportionally</li>
+                <li>Hold D key to adjust D inversely</li>
+                <li>Hold B key to adjust both B and D inversely</li>
+                <li>Auto-fit is disabled after first drag</li>
+                <li>Use date range slider to filter time period</li>
+              </ul>
+            </div>
+          )}
+          
+          {showParameters && chartParams && (
+            <div style={{
+              position: 'absolute',
+              top: '50px',
+              right: '10px',
+              zIndex: '90',
+              backgroundColor: 'rgba(255, 255, 255, 0.95)',
+              padding: '15px',
+              borderRadius: '5px',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.15)',
+              maxWidth: '300px'
+            }}>
+              <h4 style={{ marginTop: 0 }}>Current Parameters</h4>
+              <pre style={{ fontSize: '12px', maxHeight: '300px', overflowY: 'auto' }}>
+                {JSON.stringify(chartParams, null, 2)}
+              </pre>
+            </div>
+          )}
+          
           <div style={{ marginBottom: 50 }}>
             <InteractiveDCAChart
               key={chartKey}
@@ -198,6 +358,7 @@ function App() {
               onParametersCalculated={handleParameters}
             />
           </div>
+          
           <div style={{ marginTop: 10 }}>
             <label>
               Production Date Range:
@@ -217,6 +378,7 @@ function App() {
             </div>
           </div>
         </div>
+        
         <div style={{ width: 250 }}>
           <div style={{ marginBottom: 20 }}>
             <h4>Phase Colors</h4>
@@ -234,6 +396,7 @@ function App() {
               </div>
             ))}
           </div>
+          
           <div style={{ marginBottom: 20 }}>
             <h4>Axis & Forecast</h4>
             <div style={{ marginBottom: 10 }}>
@@ -271,6 +434,7 @@ function App() {
               </label>
             </div>
           </div>
+          
           <div>
             <button
               onClick={resetAutoFit}
