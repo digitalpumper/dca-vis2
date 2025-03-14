@@ -10,8 +10,9 @@ function App() {
   const [dataString, setDataString] = useState('');
   const [minDate, setMinDate] = useState(null);
   const [maxDate, setMaxDate] = useState(null);
-  // Initialize dateRange with a fallback range [0,1]
-  const [dateRange, setDateRange] = useState([0, 1]);
+  // sliderRange is updated continuously; filterRange is applied to the chart.
+  const [sliderRange, setSliderRange] = useState([0, 1]);
+  const [filterRange, setFilterRange] = useState([0, 1]);
 
   const [showDataInput, setShowDataInput] = useState(false);
   const [showParameters, setShowParameters] = useState(false);
@@ -32,7 +33,7 @@ function App() {
   const [sixtyDayAverages, setSixtyDayAverages] = useState(null);
   const [sixtyDayJSON, setSixtyDayJSON] = useState("");
 
-  // Handle file upload (CSV, TXT, XLS, XLSX)
+  // Handle file upload for CSV, TXT, XLS, XLSX
   const handleFileUpload = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -56,7 +57,7 @@ function App() {
     }
   }, []);
 
-  // When dataString changes, update minDate and maxDate from the CSV
+  // Update date range from CSV data
   useEffect(() => {
     if (!dataString) return;
     try {
@@ -69,9 +70,10 @@ function App() {
           const maxD = new Date(Math.max(...dates));
           setMinDate(minD);
           setMaxDate(maxD);
-          // Use a fallback: if computed totalDays is 0, use 1.
           const computedDays = Math.ceil((maxD - minD) / (1000 * 60 * 60 * 24));
-          setDateRange([0, computedDays > 0 ? computedDays : 1]);
+          const totalDays = computedDays > 0 ? computedDays : 1;
+          setSliderRange([0, totalDays]);
+          setFilterRange([0, totalDays]);
         }
       }
     } catch (err) {
@@ -79,7 +81,7 @@ function App() {
     }
   }, [dataString]);
 
-  // totalDays uses fallback of 1 when no data is loaded.
+  // totalDays fallback to 1 if no data loaded
   const totalDays = useMemo(() => {
     if (minDate && maxDate) {
       const diff = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
@@ -88,13 +90,14 @@ function App() {
     return 1;
   }, [minDate, maxDate]);
 
+  // Calculate chart filter dates from filterRange (updated only on slider release)
   const filteredStartDate = useMemo(() => {
-    return minDate ? new Date(minDate.getTime() + dateRange[0] * 86400000) : null;
-  }, [minDate, dateRange]);
+    return minDate ? new Date(minDate.getTime() + filterRange[0] * 86400000) : null;
+  }, [minDate, filterRange]);
 
   const filteredEndDate = useMemo(() => {
-    return minDate ? new Date(minDate.getTime() + dateRange[1] * 86400000) : null;
-  }, [minDate, dateRange]);
+    return minDate ? new Date(minDate.getTime() + filterRange[1] * 86400000) : null;
+  }, [minDate, filterRange]);
 
   const resetAutoFit = () => setChartKey(prev => prev + 1);
 
@@ -119,6 +122,11 @@ function App() {
   const tipFormatter = (val) => {
     return minDate ? new Date(minDate.getTime() + val * 86400000).toDateString() : val;
   };
+
+  // onFinalChange callback: update filterRange to trigger expensive recalculation
+  const handleFinalChange = useCallback(() => {
+    setFilterRange(sliderRange);
+  }, [sliderRange]);
 
   return (
     <div style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
@@ -196,14 +204,15 @@ function App() {
               <DualRangeSlider
                 min={0}
                 max={totalDays}
-                values={dateRange}
-                onChange={setDateRange}
+                values={sliderRange}
+                onChange={setSliderRange}
                 tipFormatter={tipFormatter}
+                onFinalChange={handleFinalChange}
               />
             </label>
             <div style={{ marginTop: 5 }}>
               {minDate
-                ? `${new Date(minDate.getTime() + dateRange[0] * 86400000).toDateString()} – ${new Date(minDate.getTime() + dateRange[1] * 86400000).toDateString()}`
+                ? `${new Date(minDate.getTime() + filterRange[0] * 86400000).toDateString()} – ${new Date(minDate.getTime() + filterRange[1] * 86400000).toDateString()}`
                 : 'N/A'}
             </div>
           </div>

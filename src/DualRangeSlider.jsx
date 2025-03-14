@@ -2,60 +2,63 @@
 import React from 'react';
 import { Range } from 'react-range';
 
-const DualRangeSlider = ({ min, max, values, onChange, tipFormatter }) => {
+const DualRangeSlider = ({ min, max, values, onChange, tipFormatter, onFinalChange }) => {
+  // Wrap the Range in a div that calls onFinalChange on mouse or touch end.
   return (
-    <Range
-      step={1}
-      min={min}
-      max={max}
-      values={values}
-      onChange={onChange}
-      renderTrack={({ props, children }) => (
-        <div
-          {...props}
-          style={{
-            ...props.style,
-            height: '6px',
-            background: '#ddd',
-            margin: '10px 0'
-          }}
-        >
-          {children}
-        </div>
-      )}
-      renderThumb={({ props, index, isDragged }) => {
-        // Destructure "key" to avoid spreading it
-        const { key, ...rest } = props;
-        return (
+    <div onMouseUp={onFinalChange} onTouchEnd={onFinalChange}>
+      <Range
+        step={1}
+        min={min}
+        max={max}
+        values={values}
+        onChange={onChange}
+        renderTrack={({ props, children }) => (
           <div
-            key={key}
-            {...rest}
+            {...props}
             style={{
-              ...rest.style,
-              height: '20px',
-              width: '20px',
-              borderRadius: '50%',
-              backgroundColor: isDragged ? '#548BF4' : '#CCC',
-              display: 'flex',
-              justifyContent: 'center',
-              alignItems: 'center'
+              ...props.style,
+              height: '6px',
+              background: '#ddd',
+              margin: '10px 0'
             }}
           >
+            {children}
+          </div>
+        )}
+        renderThumb={({ props, index, isDragged }) => {
+          // Destructure key to avoid spreading it
+          const { key, ...rest } = props;
+          return (
             <div
+              key={key}
+              {...rest}
               style={{
-                position: 'absolute',
-                top: '-28px',
-                color: '#000',
-                fontWeight: 'bold',
-                fontSize: '12px'
+                ...rest.style,
+                height: '20px',
+                width: '20px',
+                borderRadius: '50%',
+                backgroundColor: isDragged ? '#548BF4' : '#CCC',
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center'
               }}
             >
-              {tipFormatter ? tipFormatter(values[index]) : values[index]}
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '-28px',
+                  color: '#000',
+                  fontWeight: 'bold',
+                  fontSize: '12px'
+                }}
+              >
+                {tipFormatter ? tipFormatter(values[index]) : values[index]}
+              </div>
             </div>
-          </div>
-        );
-      }}
-    />
+          );
+        }}
+      />
+    </div>
   );
 };
 
