@@ -13,7 +13,7 @@ function App() {
   const [sliderRange, setSliderRange] = useState([0, 1]);
   const [filterRange, setFilterRange] = useState([0, 1]);
 
-  // Always show these controls for debugging, even when embedded.
+  // Always show these controls for manual copy/paste.
   const [showDataInput, setShowDataInput] = useState(true);
   const [showParameters, setShowParameters] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
@@ -39,29 +39,21 @@ function App() {
   useEffect(() => {
     try {
       setIsEmbedded(window.self !== window.top);
-      // Notify parent window (Spotfire) if embedded
       if (window.self !== window.top) {
-        window.parent.postMessage({
-          type: 'ready',
-          status: 'initialized'
-        }, '*');
+        window.parent.postMessage({ type: 'ready', status: 'initialized' }, '*');
       }
     } catch (e) {
       setIsEmbedded(true);
     }
   }, []);
 
-  // Listen for messages from Spotfire (if any)
+  // Listen for messages from Spotfire (to update CSV input).
   useEffect(() => {
     function handleMessage(event) {
-      if (event.origin !== window.location.origin && 
-          !event.origin.includes('spotfire.com') && 
-          !event.origin.includes('tibco.com')) {
-        console.log('Message from untrusted origin:', event.origin);
-        return;
-      }
-      
-      if (event.data && event.data.type === 'spotfireData') {
+      if (
+        event.data &&
+        event.data.type === 'spotfireData'
+      ) {
         console.log('Received data from Spotfire');
         setIsLoadingFromSpotfire(true);
         try {
@@ -79,30 +71,23 @@ function App() {
             setDataString(csvRows.join('\n'));
           }
           if (window.parent) {
-            window.parent.postMessage({
-              type: 'dataReceived',
-              status: 'success'
-            }, '*');
+            window.parent.postMessage({ type: 'dataReceived', status: 'success' }, '*');
           }
           setIsLoadingFromSpotfire(false);
         } catch (error) {
           console.error('Error processing Spotfire data:', error);
           if (window.parent) {
-            window.parent.postMessage({
-              type: 'error',
-              message: error.message
-            }, '*');
+            window.parent.postMessage({ type: 'error', message: error.message }, '*');
           }
           setIsLoadingFromSpotfire(false);
         }
       }
     }
-    
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  // Handle file upload for CSV, TXT, XLS, XLSX
+  // Handle file upload for CSV, TXT, XLS, XLSX.
   const handleFileUpload = useCallback((e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -126,7 +111,7 @@ function App() {
     }
   }, []);
 
-  // Load sample data if not embedded and no data provided
+  // Load sample data if not embedded and no CSV provided.
   useEffect(() => {
     if (!isEmbedded && !dataString) {
       fetch('/sample-data.csv')
@@ -139,7 +124,7 @@ function App() {
     }
   }, [isEmbedded, dataString]);
 
-  // Update date range from CSV data
+  // Update date range from CSV data.
   useEffect(() => {
     if (!dataString) return;
     try {
@@ -209,10 +194,8 @@ function App() {
 
   return (
     <div style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
-      {/* Changed header text */}
       <h2>Custom DCA Application</h2>
       
-      {/* Always show upload controls and CSV Data button */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
         <label>
           Upload CSV/Excel:&nbsp;
@@ -223,7 +206,6 @@ function App() {
         </button>
       </div>
       
-      {/* CSV text area for debugging */}
       {showDataInput && (
         <div style={{ marginBottom: 10 }}>
           <textarea
@@ -235,12 +217,6 @@ function App() {
           />
         </div>
       )}
-      
-      {/* Debug area showing raw CSV data */}
-      <div style={{ marginBottom: 10 }}>
-        <h4>Debug: Raw CSV Data</h4>
-        <pre style={{ background: '#eee', padding: '10px' }}>{dataString}</pre>
-      </div>
       
       {isLoadingFromSpotfire && (
         <div style={{ 
