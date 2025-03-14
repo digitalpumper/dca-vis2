@@ -10,11 +10,11 @@ function App() {
   const [dataString, setDataString] = useState('');
   const [minDate, setMinDate] = useState(null);
   const [maxDate, setMaxDate] = useState(null);
-  // sliderRange is updated continuously; filterRange is applied to the chart.
   const [sliderRange, setSliderRange] = useState([0, 1]);
   const [filterRange, setFilterRange] = useState([0, 1]);
 
-  const [showDataInput, setShowDataInput] = useState(false);
+  // Always show these controls for debugging, even when embedded.
+  const [showDataInput, setShowDataInput] = useState(true);
   const [showParameters, setShowParameters] = useState(false);
   const [showInstructions, setShowInstructions] = useState(false);
   const [show60DayAverages, setShow60DayAverages] = useState(false);
@@ -36,12 +36,10 @@ function App() {
   const [sixtyDayAverages, setSixtyDayAverages] = useState(null);
   const [sixtyDayJSON, setSixtyDayJSON] = useState("");
 
-  // Check if running inside iframe (Spotfire)
   useEffect(() => {
     try {
       setIsEmbedded(window.self !== window.top);
-      
-      // Notify parent window that we're ready to receive data
+      // Notify parent window (Spotfire) if embedded
       if (window.self !== window.top) {
         window.parent.postMessage({
           type: 'ready',
@@ -49,16 +47,13 @@ function App() {
         }, '*');
       }
     } catch (e) {
-      // If we can't access window.top due to security restrictions,
-      // we're likely in an iframe with different origin
       setIsEmbedded(true);
     }
   }, []);
 
-  // Listen for messages from Spotfire
+  // Listen for messages from Spotfire (if any)
   useEffect(() => {
     function handleMessage(event) {
-      // Basic security check
       if (event.origin !== window.location.origin && 
           !event.origin.includes('spotfire.com') && 
           !event.origin.includes('tibco.com')) {
@@ -69,15 +64,11 @@ function App() {
       if (event.data && event.data.type === 'spotfireData') {
         console.log('Received data from Spotfire');
         setIsLoadingFromSpotfire(true);
-        
         try {
-          // Use the raw CSV directly if provided
           if (event.data.rawCSV) {
             setDataString(event.data.rawCSV);
           } else if (event.data.data && event.data.headers) {
-            // Otherwise convert JSON back to CSV
             const csvRows = [event.data.headers.join(',')];
-            
             event.data.data.forEach(row => {
               const values = event.data.headers.map(header => {
                 const val = row[header];
@@ -85,18 +76,14 @@ function App() {
               });
               csvRows.push(values.join(','));
             });
-            
             setDataString(csvRows.join('\n'));
           }
-          
-          // Confirm receipt to parent
           if (window.parent) {
             window.parent.postMessage({
               type: 'dataReceived',
               status: 'success'
             }, '*');
           }
-          
           setIsLoadingFromSpotfire(false);
         } catch (error) {
           console.error('Error processing Spotfire data:', error);
@@ -142,7 +129,6 @@ function App() {
   // Load sample data if not embedded and no data provided
   useEffect(() => {
     if (!isEmbedded && !dataString) {
-      // Only load sample data when running standalone
       fetch('/sample-data.csv')
         .then(response => {
           if (!response.ok) throw new Error('Sample data not found');
@@ -177,7 +163,6 @@ function App() {
     }
   }, [dataString]);
 
-  // totalDays fallback to 1 if no data loaded
   const totalDays = useMemo(() => {
     if (minDate && maxDate) {
       const diff = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24));
@@ -186,7 +171,6 @@ function App() {
     return 1;
   }, [minDate, maxDate]);
 
-  // Calculate chart filter dates from filterRange (updated only on slider release)
   const filteredStartDate = useMemo(() => {
     return minDate ? new Date(minDate.getTime() + filterRange[0] * 86400000) : null;
   }, [minDate, filterRange]);
@@ -219,29 +203,28 @@ function App() {
     return minDate ? new Date(minDate.getTime() + val * 86400000).toDateString() : val;
   };
 
-  // onFinalChange callback: update filterRange to trigger expensive recalculation
   const handleFinalChange = useCallback(() => {
     setFilterRange(sliderRange);
   }, [sliderRange]);
 
   return (
     <div style={{ padding: 20, fontFamily: 'Arial, sans-serif' }}>
-      <h2>{isEmbedded ? 'Spotfire DCA Visualization' : 'Custom DCA Application'}</h2>
+      {/* Changed header text */}
+      <h2>Custom DCA Application</h2>
       
-      {/* Hide upload controls when embedded in Spotfire */}
-      {!isEmbedded && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-          <label>
-            Upload CSV/Excel:&nbsp;
-            <input type="file" onChange={handleFileUpload} />
-          </label>
-          <button onClick={() => setShowDataInput(prev => !prev)}>
-            {showDataInput ? "Hide CSV Data" : "Show CSV Data"}
-          </button>
-        </div>
-      )}
+      {/* Always show upload controls and CSV Data button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+        <label>
+          Upload CSV/Excel:&nbsp;
+          <input type="file" onChange={handleFileUpload} />
+        </label>
+        <button onClick={() => setShowDataInput(prev => !prev)}>
+          {showDataInput ? "Hide CSV Data" : "Show CSV Data"}
+        </button>
+      </div>
       
-      {showDataInput && !isEmbedded && (
+      {/* CSV text area for debugging */}
+      {showDataInput && (
         <div style={{ marginBottom: 10 }}>
           <textarea
             value={dataString}
@@ -253,21 +236,11 @@ function App() {
         </div>
       )}
       
+      {/* Debug area showing raw CSV data */}
       <div style={{ marginBottom: 10 }}>
-        <button onClick={() => setShow60DayAverages(prev => !prev)}>
-          {show60DayAverages ? "Hide 60-Day Averages" : "Show 60-Day Averages"}
-        </button>
+        <h4>Debug: Raw CSV Data</h4>
+        <pre style={{ background: '#eee', padding: '10px' }}>{dataString}</pre>
       </div>
-      
-      {show60DayAverages && sixtyDayAverages && (
-        <div style={{
-          background: '#f9f9f9', border: '1px solid #ccc', padding: 10,
-          marginBottom: 10, borderRadius: 4
-        }}>
-          <h4 style={{ marginTop: 0 }}>60-Day Forecast Averages</h4>
-          <pre style={{ margin: 0 }}>{sixtyDayJSON}</pre>
-        </div>
-      )}
       
       {isLoadingFromSpotfire && (
         <div style={{ 
