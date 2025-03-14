@@ -10,15 +10,17 @@
     "@testing-library/user-event": "^13.5.0",
     "d3": "^7.9.0",
     "lodash": "^4.17.21",
+    "p-limit": "^6.2.0",
     "query-string": "^9.1.1",
     "rc-slider": "^8.7.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-range": "^1.10.0",
-    "react-scripts": "5.0.1",
+    "react-scripts": "^5.0.1",
     "react-slider": "^2.0.6",
     "web-vitals": "^2.1.4",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "yocto-queue": "^1.2.0"
   },
   "scripts": {
     "start": "react-scripts start",
